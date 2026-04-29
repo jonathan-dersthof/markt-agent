@@ -5,6 +5,7 @@ import numpy as np
 from pathlib import Path
 from constants import TICKERS, DOWNLOAD, FEATURES, LABELING
 
+
 class Importer:
     def __init__(self, data_dir = DOWNLOAD["data_dir"]):
         self.data_dir : Path = data_dir
@@ -13,6 +14,7 @@ class Importer:
         self.processed_data : dict[str, pd.DataFrame] | None = None
 
     def download(self, ticker : str) -> pd.DataFrame:
+        (Path(self.data_dir) / "raw").mkdir(parents=True, exist_ok=True)
         download_path = Path(self.data_dir) / "raw" / f"{ticker.replace('^', '')}.csv"
 
         if not download_path.exists():
@@ -102,17 +104,20 @@ class Importer:
         return dataframe
 
     def process(self, ticker):
-        raw_data = self.download(ticker)
-        features = self.add_features(ticker, raw_data)
-        processed = self.add_labels(features)
-        processed.drop(columns=["Close"], errors="ignore", inplace=True)
+        (Path(self.data_dir) / "processed").mkdir(parents = True, exist_ok = True)
+        processed_path = Path(self.data_dir) / "processed" / f"{ticker.replace('^', '')}.csv"
+
+        if not processed_path.exists():
+            raw_data = self.download(ticker)
+            features = self.add_features(ticker, raw_data)
+            processed = self.add_labels(features)
+            processed.drop(columns = ["Close"], errors = "ignore", inplace = True)
+        else:
+            processed = pd.read_csv(processed_path, index_col = 0, parse_dates=True)
 
         return processed
 
     def process_all(self) -> dict[str, pd.DataFrame]:
-        (Path(self.data_dir) / "raw").mkdir(parents=True, exist_ok=True)
-        (Path(self.data_dir) / "processed").mkdir(parents=True, exist_ok=True)
-
         raw_data_dict = {}
         processed_data_dict = {}
 
@@ -121,7 +126,7 @@ class Importer:
             processed_path = Path(self.data_dir) / "processed" / f"{ticker.replace('^', '')}.csv"
 
             processed = self.process(ticker)
-            processed.to_csv(processed_path, index=False)
+            processed.to_csv(processed_path, index=True)
             processed_data_dict[ticker] = processed
 
             raw_data_dict[ticker] = pd.read_csv(raw_path, index_col=0, parse_dates=True)
@@ -131,8 +136,6 @@ class Importer:
 
         return processed_data_dict
 
-
 if __name__ == "__main__":
     importer = Importer()
     importer.process_all()
-
