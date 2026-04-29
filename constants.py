@@ -1,10 +1,14 @@
-TICKERS = ["AAPL", "MSFT", "NVDA", "^GSPC"]
+TICKERS = ["AAPL",
+           "MSFT",
+           "NVDA",
+           "^GSPC"
+           ]
 
 DOWNLOAD = {
     "start": "2016-01-01",
     "period": "10y",
     "interval": "1d",
-    "data_dir": "data/raw",
+    "data_dir": "data",
 }
 
 FEATURES = {
