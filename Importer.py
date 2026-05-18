@@ -7,7 +7,7 @@ from constants import TICKERS, DOWNLOAD, FEATURES, LABELING
 
 
 class Importer:
-    def __init__(self, data_dir = DOWNLOAD["data_dir"]):
+    def __init__(self,  data_dir = DOWNLOAD["data_dir"]):
         self.data_dir : Path = data_dir
 
         self.raw_data : dict[str, pd.DataFrame] | None = None
@@ -66,7 +66,9 @@ class Importer:
         f, s, sig = FEATURES["macd"]
         ema_fast = close.ewm(span=f, adjust=False).mean()
         ema_slow = close.ewm(span=s, adjust=False).mean()
-        macd_line = ema_fast - ema_slow
+
+        # MACD als prozentuale Abweichung ausdrücken statt in absoluten Dollar
+        macd_line = ((ema_fast - ema_slow) / ema_slow) * 100
         dataframe["macd"] = macd_line
         dataframe["macd_signal"] = macd_line.ewm(span=sig, adjust=False).mean()
         dataframe["macd_hist"] = macd_line - dataframe["macd_signal"]
@@ -139,3 +141,4 @@ class Importer:
 if __name__ == "__main__":
     importer = Importer()
     importer.process_all()
+    print(importer.processed_data)
