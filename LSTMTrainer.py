@@ -12,7 +12,7 @@ from constants import SEQUENCE_LEN, SPLIT
 from Importer import Importer
 from StockDataset import StockDataset
 from StockLSTM import StockLSTM
-
+from Predictor import Predictor
 
 class LSTMTrainer:
     def __init__(self,
@@ -26,6 +26,7 @@ class LSTMTrainer:
                  ):
         self.processed_data_dict = processed_data_dict
         self.sequence_len = sequence_len
+        self.global_scaler = StandardScaler()
         self.global_datasets = self.setup_datasets()
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -63,36 +64,53 @@ class LSTMTrainer:
         return train_df, val_df
 
     def setup_datasets(self):
+        """Erstellt den globalen Buffer und fittet EINEN globalen Scaler."""
+        train_dfs = []
+        val_dfs = []
+
+        for ticker, df in self.processed_data_dict.items():
+            n = len(df)
+            train_end = int(n * SPLIT["train"])
+            val_end = int(n * (SPLIT["train"] + SPLIT["val"]))
+
+            train_dfs.append(df.iloc[:train_end].copy())
+            val_dfs.append(df.iloc[train_end:val_end].copy())
+
+        feature_cols = [col for col in train_dfs[0].columns if col not in ["ticker", "label"]]
+
+        combined_train_features = np.vstack([df[feature_cols].values for df in train_dfs])
+        self.global_scaler.fit(combined_train_features)
+
         train_datasets = []
         val_datasets = []
 
-        for ticker, df in self.processed_data_dict.items():
-            train_df, val_df = self.split_and_scale_data(df)
+        for t_df in train_dfs:
+            t_df[feature_cols] = self.global_scaler.transform(t_df[feature_cols].values)
+            if len(t_df) > self.sequence_len:
+                train_datasets.append(StockDataset(t_df, self.sequence_len))
 
-            if len(train_df) > self.sequence_len:
-                train_datasets.append(StockDataset(train_df, self.sequence_len))
-            if len(val_df) > self.sequence_len:
-                val_datasets.append(StockDataset(val_df, self.sequence_len))
-
-        global_train_dataset = ConcatDataset(train_datasets)
-        global_val_dataset = ConcatDataset(val_datasets)
+        for v_df in val_dfs:
+            v_df[feature_cols] = self.global_scaler.transform(v_df[feature_cols].values)
+            if len(v_df) > self.sequence_len:
+                val_datasets.append(StockDataset(v_df, self.sequence_len))
 
         return {
-            "train": global_train_dataset,
-            "val": global_val_dataset
+            "train": ConcatDataset(train_datasets),
+            "val": ConcatDataset(val_datasets)
         }
 
     def setup_training(self,
                        hidden_size,
                        batch_size,
                        learning_rate,
+                       weight_decay,
                        num_layers
                        ):
         sample_df = next(iter(self.processed_data_dict.values()))
         input_size = len(sample_df.columns) - 2
 
         self.model = StockLSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, num_classes=3, )
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=1e-2)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
         self.train_loader = DataLoader(self.global_datasets["train"], batch_size=batch_size, shuffle=True)
         self.val_loader = DataLoader(self.global_datasets["val"], batch_size=batch_size, shuffle=False)
@@ -143,7 +161,7 @@ class LSTMTrainer:
                 loss = self.criterion(predictions, targets)
                 total_val_loss += loss.item()
 
-                _, predicted_classes = torch.max(predictions, dim=1)
+                predicted_classes = torch.max(predictions, dim=1)[1]
                 correct_predictions += (predicted_classes == targets).sum().item()
                 total_samples += targets.size(0)
 
@@ -189,4 +207,22 @@ if __name__ == "__main__":
         print(df["label"].value_counts(normalize=True))  # Zeigt Prozentanteile
 
     trainer = LSTMTrainer(processed_dict)
-    trained_model = trainer.train(epochs=30)
+    trained_model_a = trainer.train(epochs=30)
+    trainer.setup_training(32, 32, 0.003, 1e-3, 1)
+    trained_model_b = trainer.train(epochs=30)
+
+    predicted = []
+
+    predictor_a = Predictor(trained_model_a, trainer.global_scaler)
+    predictor_b = Predictor(trained_model_b, trainer.global_scaler)
+
+    predicted.append(predictor_a.predict(processed_dict["AAPL"], 1000))
+    predicted.append(predictor_b.predict(processed_dict["AAPL"], 1000))
+    print(processed_dict["AAPL"].iat[1000, 12])
+
+    predicted.append(predictor_a.predict(processed_dict["AAPL"], 1050))
+    predicted.append(predictor_b.predict(processed_dict["AAPL"], 1050))
+    print(processed_dict["AAPL"].iat[1050, 12])
+
+    for p in predicted:
+        print(p)

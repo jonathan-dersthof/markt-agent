@@ -1,8 +1,8 @@
-TICKERS = ["AAPL",
-           "MSFT",
-           "NVDA",
-           "^GSPC"
-           ]
+TICKERS = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN",
+    "JPM", "XOM", "KO",
+    "^GSPC", "^IXIC"
+]
 
 DOWNLOAD = {
     "start": "2016-01-01",
