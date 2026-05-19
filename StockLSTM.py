@@ -16,6 +16,7 @@ class StockLSTM(nn.Module):
 
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
 
+        self.layer_norm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(hidden_size, num_classes)
 
@@ -26,6 +27,7 @@ class StockLSTM(nn.Module):
         out, _ = self.lstm(x, (h0, c0))
         out = out[:, -1, :]  # nur letzter Zeitschritt
 
+        out = self.layer_norm(out)
         out = self.dropout(out)
         out = self.fc(out)
 

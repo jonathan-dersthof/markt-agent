@@ -20,8 +20,8 @@ FEATURES = {
 }
 
 LABELING = {
-    "horizon": 5,
-    "threshold": 0.02,
+    "horizon": 3,
+    "threshold": 0.01,
 }
 
 SPLIT = {
@@ -29,4 +29,4 @@ SPLIT = {
     "val":   0.15,
 }
 
-SEQUENCE_LEN = 30
+SEQUENCE_LEN = 15

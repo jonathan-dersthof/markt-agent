@@ -22,7 +22,8 @@ class LSTMTrainer:
                  num_layers=1,
                  learning_rate = 0.001,
                  batch_size=32,
-                 dropout = 0.3
+                 dropout = 0.5,
+                 weight_decay = 1e-2
                  ):
         self.processed_data_dict = processed_data_dict
         self.sequence_len = sequence_len
@@ -36,12 +37,39 @@ class LSTMTrainer:
         sample_df = next(iter(self.processed_data_dict.values()))
         input_size = len(sample_df.columns) - 2
 
-        self.model = StockLSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, num_classes=3, dropout=dropout)
-        self.criterion = nn.CrossEntropyLoss(weight=self.calculate_class_weights())
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=1e-2)
+        self.model = StockLSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_classes=3,
+            dropout=dropout
+        )
+        self.criterion = nn.CrossEntropyLoss(
+            weight=self.calculate_class_weights(),
+            label_smoothing=0.05
+        )
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay
+        )
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5
+        )
 
-        self.train_loader = DataLoader(self.global_datasets["train"], batch_size=batch_size, shuffle=True)
-        self.val_loader = DataLoader(self.global_datasets["val"], batch_size=batch_size, shuffle=False)
+        self.train_loader = DataLoader(
+            self.global_datasets["train"],
+            batch_size=batch_size,
+            shuffle=True
+        )
+        self.val_loader = DataLoader(
+            self.global_datasets["val"],
+            batch_size=batch_size,
+            shuffle=False
+        )
 
     @staticmethod
     def split_and_scale_data(df: pd.DataFrame):
@@ -104,12 +132,13 @@ class LSTMTrainer:
                        batch_size,
                        learning_rate,
                        weight_decay,
-                       num_layers
+                       num_layers,
+                       dropout
                        ):
         sample_df = next(iter(self.processed_data_dict.values()))
         input_size = len(sample_df.columns) - 2
 
-        self.model = StockLSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, num_classes=3, )
+        self.model = StockLSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, num_classes=3, dropout=dropout)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
         self.train_loader = DataLoader(self.global_datasets["train"], batch_size=batch_size, shuffle=True)
@@ -175,10 +204,11 @@ class LSTMTrainer:
 
         return total_train_loss, total_val_loss, val_accuracy
 
-    def train(self, epochs=20):
+    def train(self, epochs=30, patience=10):
         best_val_loss = np.inf
         best_model_wts = copy.deepcopy(self.model.state_dict())
         best_epoch = 0
+        epochs_w_o_improvement = 0
 
         for epoch in range(epochs):
             total_train_loss, total_val_loss, val_accuracy = self.run_epoch()
@@ -188,10 +218,23 @@ class LSTMTrainer:
                 best_epoch = epoch + 1
                 best_model_wts = copy.deepcopy(self.model.state_dict())
 
+                epochs_w_o_improvement = 0
+            else:
+                epochs_w_o_improvement += 1
+
+            if epochs_w_o_improvement >= patience:
+                print(f"Keine Verbesserung seit {patience} Epochen.")
+                break
+
+            self.scheduler.step(total_val_loss)
+            current_lr = self.optimizer.param_groups[0]['lr']
+
             print(f"Epoch [{epoch + 1}/{epochs}] | "
+                  f"LR: {current_lr} | "
                   f"Train Loss: {total_train_loss:.4f} | "
                   f"Val Loss: {total_val_loss:.4f} | "
-                  f"Val Accuracy: {val_accuracy:.2f}%")
+                  f"Val Accuracy: {val_accuracy:.2f}%"
+                  )
 
         print(f"\nTraining beendet! Bestes Modell in Epoche {best_epoch} mit Val Loss: {best_val_loss:.4f} geladen.")
         self.model.load_state_dict(best_model_wts)
@@ -207,22 +250,25 @@ if __name__ == "__main__":
         print(df["label"].value_counts(normalize=True))  # Zeigt Prozentanteile
 
     trainer = LSTMTrainer(processed_dict)
-    trained_model_a = trainer.train(epochs=30)
-    trainer.setup_training(32, 32, 0.003, 1e-3, 1)
-    trained_model_b = trainer.train(epochs=30)
+    models = []
 
-    predicted = []
+    trainer.setup_training(32, 32, 0.001, 1e-4, 1, dropout=0.5)
+    models.append(trainer.train(epochs=100, patience=20))
 
-    predictor_a = Predictor(trained_model_a, trainer.global_scaler)
-    predictor_b = Predictor(trained_model_b, trainer.global_scaler)
+    trainer.setup_training(32, 32, 0.001, 0.0, 1, dropout=0.5)
+    models.append(trainer.train(epochs=100, patience=20))
 
-    predicted.append(predictor_a.predict(processed_dict["AAPL"], 1000))
-    predicted.append(predictor_b.predict(processed_dict["AAPL"], 1000))
-    print(processed_dict["AAPL"].iat[1000, 12])
+    predictors = []
 
-    predicted.append(predictor_a.predict(processed_dict["AAPL"], 1050))
-    predicted.append(predictor_b.predict(processed_dict["AAPL"], 1050))
-    print(processed_dict["AAPL"].iat[1050, 12])
+    for model in models:
+        predictors.append(Predictor(model, trainer.global_scaler))
 
-    for p in predicted:
-        print(p)
+    for test_column in (1000, 1050, 1500, 1550, 2000, 2050):
+        print(f"\nTest {test_column}:")
+        expected = processed_dict["AAPL"].iat[test_column, 12]
+
+        for num, predictor in enumerate(predictors):
+            predicted = (predictor.predict(processed_dict["AAPL"], test_column))
+            best_class = max(predicted, key=predicted.get)
+
+            print(f"{num+1}: {predicted} -> prediction: {best_class}, expected: {expected}")
